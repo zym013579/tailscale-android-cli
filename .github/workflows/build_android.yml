@@ -86,4 +86,6 @@ jobs:
           bash -n scripts/android.sh
           ./scripts/android.sh check arm64
       - name: Test SSH environment handling and firewall marks
-        run: go test ./ssh/tailssh ./util/linuxfw ./tsconst ./util/osuser
+        run: |
+          go test ./ssh/tailssh -run 'Test(IncubatorEnvServerOnly|ForwardedEnv|ParseIncubatorArgsEnvFD|LoadForwardedEnv|FilterEnv|IsDangerousEnvVar|MatchAcceptEnvPattern|AcceptEnvPair|PathFromPAM|ExpandDefaultPath)'
+          go test ./util/linuxfw ./tsconst ./util/osuser

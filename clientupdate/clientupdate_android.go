@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strings"
 
@@ -248,7 +247,7 @@ func findAndroidAsset(release struct {
 	} `json:"assets"`
 	Prerelease bool `json:"prerelease"`
 }, ver string) (assetURL string, err error) {
-	if runtime.GOARCH != "arm64" && runtime.GOARCH != "arm" {
+	if runtime.GOARCH != "arm64" && runtime.GOARCH != "arm" && runtime.GOARCH != "amd64" {
 		return "", fmt.Errorf("unsupported architecture: %s", runtime.GOARCH)
 	}
 
@@ -257,11 +256,7 @@ func findAndroidAsset(release struct {
 	assetVer := strings.TrimSuffix(ver, "-pre")
 	assetsName := fmt.Sprintf(`tailscale_%s_%s.tgz`, assetVer, runtime.GOARCH)
 	for _, asset := range release.Assets {
-		matched, err := regexp.MatchString(`^`+assetsName+`$`, asset.Name)
-		if err != nil {
-			return "", fmt.Errorf("failed to match asset name: %w", err)
-		}
-		if matched {
+		if asset.Name == assetsName {
 			return asset.URL, nil
 		}
 	}
@@ -347,7 +342,7 @@ func extractAndInstallAndroid(downloadPath, dirExtract string, logf func(string,
 			return fmt.Errorf("failed to extract file: %w", err)
 		}
 
-		if err := os.Chmod(destPath+".new", os.FileMode(0755)|os.ModePerm); err != nil {
+		if err := os.Chmod(destPath+".new", 0755); err != nil {
 			return fmt.Errorf("failed to set executable permissions: %w", err)
 		}
 

@@ -1,6 +1,7 @@
-name: Release Android binaries
+name: Build and release Android binaries
 on:
   push:
+    branches: [main]
     tags: ['v*-android', 'v*-android-pre']
   workflow_dispatch:
     inputs:
@@ -10,12 +11,20 @@ on:
         default: false
 permissions:
   contents: read
+concurrency:
+  group: android-release-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
   build:
     uses: ./.github/workflows/build_android.yml
     with:
       prerelease: ${{ inputs.prerelease || endsWith(github.ref_name, '-pre') }}
   release:
+    if: >-
+      startsWith(github.ref, 'refs/tags/') ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+       contains(github.event.head_commit.message, 'release'))
     needs: build
     runs-on: ubuntu-24.04
     permissions:

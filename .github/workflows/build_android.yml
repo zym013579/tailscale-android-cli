@@ -1,7 +1,5 @@
 name: Build Android binaries
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
   workflow_dispatch:

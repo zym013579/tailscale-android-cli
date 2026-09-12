@@ -1,6 +1,6 @@
 # Tailscale Android CLI
 
-[![Build Android binaries](https://github.com/zym013579/tailscale-android-cli/actions/workflows/build_android.yml/badge.svg)](https://github.com/zym013579/tailscale-android-cli/actions/workflows/build_android.yml)
+[![Build Android binaries](https://github.com/zym013579/tailscale-android-cli/actions/workflows/release_android.yml/badge.svg)](https://github.com/zym013579/tailscale-android-cli/actions/workflows/release_android.yml)
 
 Android command-line builds of [Tailscale](https://github.com/tailscale/tailscale),
 maintained by **zym013579**, based on anasfanani's Android port.
@@ -29,12 +29,16 @@ SSH, DNS and routing features still require validation on the target Android dev
 
 ## GitHub Actions
 
-- **Build Android binaries** runs on main pushes, pull requests and manual dispatch.
-  It builds all three CPUs, checks ELF metadata and runs relevant Go tests.
-- **Release Android binaries** runs on tags such as `v1.102.4-android`, or manual
-  dispatch. Use `v1.102.4-android-pre` or the prerelease input for prereleases.
-- The tag must match VERSION.txt. Releases are created only after successful
-  builds; an existing release is not silently overwritten.
+- **Build and release Android binaries** builds every main push. When the latest
+  pushed commit message contains `release` (case-insensitive), it also publishes
+  the current version as the latest GitHub Release after all checks pass.
+- **Build Android binaries** handles pull requests, manual build-only runs and the
+  reusable build called by the release workflow, without duplicating main builds.
+- Matching tags such as `v1.102.4-android` and manual release dispatch still work.
+  Use `v1.102.4-android-pre` or the prerelease input for prereleases.
+- VERSION.txt determines the release version and asset names. Update it before a
+  new version is published; an existing release is not silently overwritten.
+  Tags must match VERSION.txt. A failed build never publishes a release.
 - Publishing uses the repository's built-in `GITHUB_TOKEN`; no personal token is needed.
 - Original upstream workflows are retained in `.github/upstream-workflows/` as
   reference, since they target unrelated platforms or Tailscale infrastructure.

@@ -7,6 +7,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	_ "embed"
 	"encoding/base64"
 	"encoding/json"
@@ -32,15 +33,18 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"golang.org/x/sys/unix"
+	"tailscale.com/client/local"
 	"tailscale.com/cmd/testwrapper/flakytest"
 	"tailscale.com/health"
 	"tailscale.com/ipn"
+	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/kube/egressservices"
 	"tailscale.com/kube/kubeclient"
 	"tailscale.com/kube/kubetypes"
+	"tailscale.com/net/memnet"
 	"tailscale.com/tailcfg"
 	"tailscale.com/tstest"
-	"tailscale.com/types/netmap"
+	"tailscale.com/types/key"
 )
 
 const configFileAuthKey = "some-auth-key"
@@ -52,6 +56,7 @@ func TestContainerBoot(t *testing.T) {
 		t.Fatalf("Building containerboot: %v", err)
 	}
 	egressStatus := egressSvcStatus("foo", "foo.tailnetxyz.ts.net", "100.64.0.2")
+	egressStatusUpdated := egressSvcStatus("foo", "foo.tailnetxyz.ts.net", "100.64.0.3")
 
 	metricsURL := func(port int) string {
 		return fmt.Sprintf("http://127.0.0.1:%d/metrics", port)
@@ -70,12 +75,6 @@ func TestContainerBoot(t *testing.T) {
 		// initial update for any future new watchers, then wait for all the
 		// Waits below to be true before proceeding to the next phase.
 		Notify *ipn.Notify
-
-		// If non-nil, install this NetMap on the fake LocalAPI before
-		// sending Notify. This is the replacement for the old
-		// Notify.NetMap field; reactive consumers fetch the current
-		// netmap via /localapi/v0/netmap on their own.
-		NetMap *netmap.NetworkMap
 
 		// WantCmds is the commands that containerboot should run in this phase.
 		WantCmds []string
@@ -392,19 +391,12 @@ func TestContainerBoot(t *testing.T) {
 								Name:      "test-node.test.ts.net.",
 								Addresses: []netip.Prefix{netip.MustParsePrefix("100.64.0.1/32")},
 							},
-						},
-						NetMap: &netmap.NetworkMap{
-							SelfNode: (&tailcfg.Node{
-								StableID:  tailcfg.StableNodeID("myID"),
-								Name:      "test-node.test.ts.net.",
-								Addresses: []netip.Prefix{netip.MustParsePrefix("100.64.0.1/32")},
-							}).View(),
-							Peers: []tailcfg.NodeView{
-								(&tailcfg.Node{
+							PeersChanged: []*tailcfg.Node{
+								{
 									StableID:  tailcfg.StableNodeID("ipv6ID"),
 									Name:      "ipv6-node.test.ts.net.",
 									Addresses: []netip.Prefix{netip.MustParsePrefix("::1/128")},
-								}).View(),
+								},
 							},
 						},
 						WantLog:      "no forwarding rules for egress addresses [::1/128], host supports IPv6: false",
@@ -645,13 +637,6 @@ func TestContainerBoot(t *testing.T) {
 								Name:      "new-name.test.ts.net.",
 								Addresses: []netip.Prefix{netip.MustParsePrefix("100.64.0.1/32")},
 							},
-						},
-						NetMap: &netmap.NetworkMap{
-							SelfNode: (&tailcfg.Node{
-								StableID:  tailcfg.StableNodeID("newID"),
-								Name:      "new-name.test.ts.net.",
-								Addresses: []netip.Prefix{netip.MustParsePrefix("100.64.0.1/32")},
-							}).View(),
 						},
 						WantKubeSecret: map[string]string{
 							"authkey":           "tskey-key",
@@ -1114,19 +1099,12 @@ func TestContainerBoot(t *testing.T) {
 								Name:      "test-node.test.ts.net.",
 								Addresses: []netip.Prefix{netip.MustParsePrefix("100.64.0.1/32")},
 							},
-						},
-						NetMap: &netmap.NetworkMap{
-							SelfNode: (&tailcfg.Node{
-								StableID:  tailcfg.StableNodeID("myID"),
-								Name:      "test-node.test.ts.net.",
-								Addresses: []netip.Prefix{netip.MustParsePrefix("100.64.0.1/32")},
-							}).View(),
-							Peers: []tailcfg.NodeView{
-								(&tailcfg.Node{
+							PeersChanged: []*tailcfg.Node{
+								{
 									StableID:  tailcfg.StableNodeID("fooID"),
 									Name:      "foo.tailnetxyz.ts.net.",
 									Addresses: []netip.Prefix{netip.MustParsePrefix("100.64.0.2/32")},
-								}).View(),
+								},
 							},
 						},
 						WantKubeSecret: map[string]string{
@@ -1139,6 +1117,23 @@ func TestContainerBoot(t *testing.T) {
 						},
 						EndpointStatuses: map[string]int{
 							egressSvcTerminateURL(env.localAddrPort): 200,
+						},
+					},
+					{
+						Notify: &ipn.Notify{
+							PeersChanged: []*tailcfg.Node{{
+								StableID:  tailcfg.StableNodeID("fooID"),
+								Name:      "foo.tailnetxyz.ts.net.",
+								Addresses: []netip.Prefix{netip.MustParsePrefix("100.64.0.3/32")},
+							}},
+						},
+						WantKubeSecret: map[string]string{
+							"egress-services":   string(mustJSON(t, egressStatusUpdated)),
+							"authkey":           "tskey-key",
+							"device_fqdn":       "test-node.test.ts.net.",
+							"device_id":         "myID",
+							"device_ips":        `["100.64.0.1"]`,
+							kubetypes.KeyCapVer: capver,
 						},
 					},
 				},
@@ -1295,17 +1290,11 @@ func TestContainerBoot(t *testing.T) {
 						t.Fatalf("phase %d: updating mtime for %q: %v", i, path, err)
 					}
 				}
-				nmForFake := p.NetMap
-				if nmForFake == nil && p.Notify != nil && p.Notify.SelfChange != nil {
-					// Synthesize a minimal netmap from SelfChange so
-					// containerboot's NetMap() fetch returns
-					// something usable when the test only set Notify.
-					nmForFake = &netmap.NetworkMap{
-						SelfNode: p.Notify.SelfChange.View(),
-					}
-				}
-				if nmForFake != nil {
-					env.lapi.SetNetMap(nmForFake)
+				if p.Notify != nil && p.Notify.InitialStatus == nil {
+					// Shallow-copy before mutating to avoid a race with
+					// parallel subtests that share the same *ipn.Notify.
+					p.Notify = new(*p.Notify)
+					p.Notify.InitialStatus = statusFromNotify(p.Notify)
 				}
 				env.lapi.Notify(p.Notify)
 				if p.Signal != nil {
@@ -1499,7 +1488,6 @@ type localAPI struct {
 	sync.Mutex
 	cond   *sync.Cond
 	notify *ipn.Notify
-	netmap *netmap.NetworkMap // served by /localapi/v0/netmap
 }
 
 func (lc *localAPI) Start() error {
@@ -1536,44 +1524,45 @@ func (lc *localAPI) Notify(n *ipn.Notify) {
 	lc.cond.Broadcast()
 }
 
-// SetNetMap installs the netmap that the fake /localapi/v0/netmap endpoint
-// will return.
-func (lc *localAPI) SetNetMap(nm *netmap.NetworkMap) {
-	lc.Lock()
-	defer lc.Unlock()
-	lc.netmap = nm
+func statusFromNotify(n *ipn.Notify) *ipnstate.Status {
+	st := new(ipnstate.Status)
+	if n.State != nil {
+		st.BackendState = n.State.String()
+	}
+	if n.SelfChange != nil {
+		st.Self = peerStatusFromNode(n.SelfChange.View())
+	}
+	if len(n.PeersChanged) != 0 {
+		st.Peer = map[key.NodePublic]*ipnstate.PeerStatus{}
+		for _, p := range n.PeersChanged {
+			pv := p.View()
+			st.Peer[pv.Key()] = peerStatusFromNode(pv)
+		}
+	}
+	return st
+}
+
+func peerStatusFromNode(n tailcfg.NodeView) *ipnstate.PeerStatus {
+	ps := &ipnstate.PeerStatus{
+		ID:        n.StableID(),
+		NodeID:    n.ID(),
+		PublicKey: n.Key(),
+		DNSName:   n.Name(),
+	}
+	for _, p := range n.Addresses().All() {
+		if p.IsSingleIP() {
+			ps.TailscaleIPs = append(ps.TailscaleIPs, p.Addr())
+		}
+	}
+	if n.AllowedIPs().Len() != 0 {
+		v := n.AllowedIPs()
+		ps.AllowedIPs = &v
+	}
+	return ps
 }
 
 func (lc *localAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
-	case "/localapi/v0/netmap":
-		w.Header().Set("Content-Type", "application/json")
-		lc.Lock()
-		nm := lc.netmap
-		lc.Unlock()
-		if nm == nil {
-			http.Error(w, "no netmap", http.StatusServiceUnavailable)
-			return
-		}
-		json.NewEncoder(w).Encode(nm)
-		return
-	case "/localapi/v0/debug":
-		// containerboot fetches the netmap via the "current-netmap"
-		// debug action; serve it like /localapi/v0/netmap above.
-		if r.URL.Query().Get("action") != "current-netmap" {
-			http.Error(w, "unsupported debug action", http.StatusNotFound)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		lc.Lock()
-		nm := lc.netmap
-		lc.Unlock()
-		if nm == nil {
-			http.Error(w, "no netmap", http.StatusServiceUnavailable)
-			return
-		}
-		json.NewEncoder(w).Encode(nm)
-		return
 	case "/localapi/v0/serve-config":
 		switch r.Method {
 		case "GET":
@@ -1957,5 +1946,59 @@ func newTestEnv(t *testing.T) testEnv {
 		runningSockPath: runningSockPath,
 		localAddrPort:   localAddrPort,
 		healthAddrPort:  healthAddrPort,
+	}
+}
+
+// TestProcessNotifyRefreshesDNSOnSelfChange verifies that a SelfChange
+// notification triggers a DNS refresh; without it, VIPServices created
+// after pod boot are invisible to resolveTailnetFQDN.
+func TestProcessNotifyRefreshesDNSOnSelfChange(t *testing.T) {
+	extraRec := tailcfg.DNSRecord{
+		Name:  "my-ingress.tailnet.ts.net.",
+		Type:  "A",
+		Value: "100.99.10.20",
+	}
+	dnsCfg := &tailcfg.DNSConfig{
+		ExtraRecords: []tailcfg.DNSRecord{extraRec},
+		CertDomains:  []string{"node.tailnet.ts.net"},
+	}
+
+	lal := memnet.Listen("local-tailscaled.sock:80")
+	defer lal.Close()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/localapi/v0/dns-config", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(dnsCfg); err != nil {
+			t.Errorf("encoding dns config: %v", err)
+		}
+	})
+	srv := &http.Server{Handler: mux}
+	go srv.Serve(lal)
+	t.Cleanup(func() { srv.Shutdown(context.Background()) })
+
+	client := &local.Client{Dial: lal.Dial}
+
+	// Empty starting state, as if the InitialStatus captured at pod
+	// boot carried no ExtraRecords because the VIPService didn't exist
+	// yet at that time.
+	var s netmapState
+
+	n := ipn.Notify{
+		SelfChange: &tailcfg.Node{
+			ID:   1,
+			Name: "self.tailnet.ts.net.",
+		},
+	}
+
+	got := s.processNotify(context.Background(), client, n)
+
+	if got.dnsExtraRecords.Len() != 1 {
+		t.Fatalf("dnsExtraRecords.Len() = %d, want 1", got.dnsExtraRecords.Len())
+	}
+	if rec := got.dnsExtraRecords.At(0); rec.Name != extraRec.Name {
+		t.Errorf("dnsExtraRecords[0].Name = %q, want %q", rec.Name, extraRec.Name)
+	}
+	if got.certDomains.Len() != 1 || got.certDomains.At(0) != "node.tailnet.ts.net" {
+		t.Errorf("certDomains = %v, want [node.tailnet.ts.net]", got.certDomains.AsSlice())
 	}
 }

@@ -1,0 +1,47 @@
+name: Release Android binaries
+on:
+  push:
+    tags: ['v*-android', 'v*-android-pre']
+  workflow_dispatch:
+    inputs:
+      prerelease:
+        type: boolean
+        description: Publish a prerelease
+        default: false
+permissions:
+  contents: read
+jobs:
+  build:
+    uses: ./.github/workflows/build_android.yml
+    with:
+      prerelease: ${{ inputs.prerelease || endsWith(github.ref_name, '-pre') }}
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: android-*
+          path: dist
+          merge-multiple: true
+      - name: Publish verified binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+          PRERELEASE: ${{ inputs.prerelease || endsWith(github.ref_name, '-pre') }}
+        run: |
+          tag="v${VERSION}-android"
+          args=(--latest)
+          if [[ "$PRERELEASE" == true ]]; then tag="$tag-pre"; args=(--prerelease); fi
+          if [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" != "$tag" ]]; then
+            echo "Tag must match VERSION.txt: expected $tag" >&2
+            exit 1
+          fi
+          cd dist
+          cat ./*.sha256 > SHA256SUMS
+          sha256sum -c SHA256SUMS
+          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Tailscale $VERSION for Android" --generate-notes "${args[@]}" ./*.tgz SHA256SUMS

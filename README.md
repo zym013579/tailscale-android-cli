@@ -1,87 +1,72 @@
-# Tailscale
+# Tailscale Android CLI
 
-https://tailscale.com
+[![Build Android binaries](https://github.com/zym013579/tailscale-android-cli/actions/workflows/build_android.yml/badge.svg)](https://github.com/zym013579/tailscale-android-cli/actions/workflows/build_android.yml)
 
-Private WireGuard® networks made easy
+Android command-line builds of [Tailscale](https://github.com/tailscale/tailscale),
+maintained by **zym013579**, based on anasfanani's Android port.
+Current upstream stable baseline: **v1.102.4**. Development happens on **main**;
+release versions are tags, not separate development branches.
 
-## Overview
+## Downloads
 
-This repository contains the majority of Tailscale's open source code.
-Notably, it includes the `tailscaled` daemon and
-the `tailscale` CLI tool. The `tailscaled` daemon runs on Linux, Windows,
-[macOS](https://tailscale.com/kb/1065/macos-variants/), and to varying degrees
-on FreeBSD and OpenBSD. The Tailscale iOS and Android apps use this repo's
-code, but this repo doesn't contain the mobile GUI code.
+Download from [Releases](https://github.com/zym013579/tailscale-android-cli/releases):
 
-Other [Tailscale repos](https://github.com/orgs/tailscale/repositories) of note:
+| CPU | Archive |
+| --- | --- |
+| ARMv7 | `tailscale_1.102.4_arm.tgz` |
+| ARM64 | `tailscale_1.102.4_arm64.tgz` |
+| x86_64 | `tailscale_1.102.4_amd64.tgz` |
 
-* the Android app is at https://github.com/tailscale/tailscale-android
-* the Synology package is at https://github.com/tailscale/tailscale-synology
-* the QNAP package is at https://github.com/tailscale/tailscale-qpkg
-* the Chocolatey packaging is at https://github.com/tailscale/tailscale-chocolatey
+Each archive includes the combined `tailscaled` executable, a `tailscale` symlink,
+and LICENSE. These are Android bionic executables, not APKs or Linux/glibc builds.
+Releases use Go from go.mod, NDK r27c, API 21, CGO, PIE, and 16 KiB page alignment.
+Verify downloads using the release's `SHA256SUMS` file.
 
-For background on which parts of Tailscale are open source and why,
-see [https://tailscale.com/opensource/](https://tailscale.com/opensource/).
+The companion module is [zym013579/magisk-tailscaled](https://github.com/zym013579/magisk-tailscaled).
+Default state files live in `/data/adb/tailscale`. Rooted devices can use native TUN,
+or explicitly select `--tun=userspace-networking --socks5-server=127.0.0.1:1099`.
+SSH, DNS and routing features still require validation on the target Android device.
 
-## Using
+## GitHub Actions
 
-We serve packages for a variety of distros and platforms at
-[https://pkgs.tailscale.com](https://pkgs.tailscale.com/).
+- **Build Android binaries** runs on main pushes, pull requests and manual dispatch.
+  It builds all three CPUs, checks ELF metadata and runs relevant Go tests.
+- **Release Android binaries** runs on tags such as `v1.102.4-android`, or manual
+  dispatch. Use `v1.102.4-android-pre` or the prerelease input for prereleases.
+- The tag must match VERSION.txt. Releases are created only after successful
+  builds; an existing release is not silently overwritten.
+- Publishing uses the repository's built-in `GITHUB_TOKEN`; no personal token is needed.
+- Original upstream workflows are retained in `.github/upstream-workflows/` as
+  reference, since they target unrelated platforms or Tailscale infrastructure.
 
-## Other clients
+## Local builds
 
-The [macOS, iOS, and Windows clients](https://tailscale.com/download)
-use the code in this repository but additionally include small GUI
-wrappers. The GUI wrappers on non-open source platforms are themselves
-not open source.
+Install the Go version required by go.mod and Android NDK r27c:
 
-## Building
-
-We always require the latest Go release, currently Go 1.26. (While we build
-releases with our [Go fork](https://github.com/tailscale/go/), its use is not
-required.)
-
-```
-go install tailscale.com/cmd/tailscale{,d}
-```
-
-If you're packaging Tailscale for distribution, use `build_dist.sh`
-instead, to burn commit IDs and version info into the binaries:
-
-```
-./build_dist.sh tailscale.com/cmd/tailscale
-./build_dist.sh tailscale.com/cmd/tailscaled
+```sh
+export ANDROID_NDK_HOME=/path/to/android-ndk-r27c
+./scripts/android.sh build arm64
+./scripts/android.sh build arm
+./scripts/android.sh build amd64
+./scripts/android.sh check arm64
 ```
 
-If your distro has conventions that preclude the use of
-`build_dist.sh`, please do the equivalent of what it does in your
-distro's way, so that bug reports contain useful version information.
+Outputs are in `dist/`. `GO`, `DIST_DIR` and `ANDROID_API` can override defaults.
+`--nocgo arm64` is for quick compile checks only; use the NDK for release builds.
 
-## Bugs
+## Upstream updates
 
-Please file any issues about this code or the hosted service on
-[the issue tracker](https://github.com/tailscale/tailscale/issues).
+On a clean main branch, run `./scripts/android.sh update vX.Y.Z` with an upstream
+stable tag. Resolve conflicts, review Android compatibility and any newly added
+upstream workflows, then build and test before pushing and releasing. This command
+merges into main and does not create version branches.
 
-## Contributing
+See [maintenance notes](docs/android-maintenance.md) for branch consolidation details.
 
-PRs welcome! But please file bugs. Commit messages should [reference
-bugs](https://docs.github.com/en/github/writing-on-github/autolinked-references-and-urls).
+## Credits and license
 
-We require [Developer Certificate of
-Origin](https://en.wikipedia.org/wiki/Developer_Certificate_of_Origin)
-`Signed-off-by` lines in commits.
+- [Tailscale Inc. and contributors](https://github.com/tailscale/tailscale)
+- [anasfanani's Android port](https://github.com/anasfanani/tailscale-android-cli)
+- [Original upstream README](README.upstream.md)
 
-See [commit-messages.md](docs/commit-messages.md) (or skim `git log`) for our commit message style.
-
-## About Us
-
-[Tailscale](https://tailscale.com/) is primarily developed by the
-people at https://github.com/orgs/tailscale/people. For other contributors,
-see:
-
-* https://github.com/tailscale/tailscale/graphs/contributors
-* https://github.com/tailscale/tailscale-android/graphs/contributors
-
-## Legal
-
-WireGuard is a registered trademark of Jason A. Donenfeld.
+[BSD 3-Clause License](LICENSE). Original copyright and contribution history are retained.

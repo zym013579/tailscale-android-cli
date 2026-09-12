@@ -1,101 +1,89 @@
-name: "tagged-release"
+name: Build Android binaries
 on:
-  workflow_dispatch:
   push:
-    tags:
-      - "v*-android"
-      - "v*-android-pre"
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      prerelease:
+        type: boolean
+        default: false
+    outputs:
+      version:
+        description: Tailscale version
+        value: ${{ jobs.metadata.outputs.version }}
 permissions:
-  contents: write
+  contents: read
 jobs:
+  metadata:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: version
+        shell: bash
+        run: |
+          version=$(tr -d '\r\n' < VERSION.txt)
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          echo "version=$version" >> "$GITHUB_OUTPUT"
   build:
-      runs-on: ubuntu-latest
-      steps:
-        - name: Determine release type
-          id: release_type
-          run: |
-            if [[ "${{ github.ref_name }}" == *"-pre" ]]; then
-              echo "is_prerelease=true" >> $GITHUB_OUTPUT
-            else
-              echo "is_prerelease=false" >> $GITHUB_OUTPUT
-            fi
-        - name: Checkout code
-          uses: actions/checkout@v4
-          with:
-            fetch-depth: 0
-          
-        - name: Set up Go
-          uses: actions/setup-go@v5
-          with:
-            go-version-file: 'go.mod'
-            check-latest: true
-          id: go
-        - run: go version
-
-        - name: Install Android NDK
-          id: setup-ndk
-          uses: nttld/setup-ndk@v1
-          with:
-            ndk-version: r27c
-            add-to-path: false
-
-        - name: Install UPX
-          uses: crazy-max/ghaction-upx@v3
-          with:
-            install-only: true
-
-        - name: Build arm
-          run: |
-            export ANDROID_NDK_PATH="${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin"
-            if [[ "${{ steps.release_type.outputs.is_prerelease }}" == "true" ]]; then
-              ./scripts/android.sh build --pre --upx arm
-            else
-              ./scripts/android.sh build --upx arm
-            fi
-        - name: Build arm64
-          run: |
-            export ANDROID_NDK_PATH="${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin"
-            if [[ "${{ steps.release_type.outputs.is_prerelease }}" == "true" ]]; then
-              ./scripts/android.sh build --pre --upx arm64
-            else
-              ./scripts/android.sh build --upx arm64
-            fi
-        
-        - name: Compress artifacts
-          id: compress_artifacts
-          run: |
-            eval "$(./build_dist.sh shellvars)"
-            echo "VERSION_SHORT=$VERSION_SHORT" >> $GITHUB_OUTPUT
-            tar -czf dist/tailscale_${VERSION_SHORT}_arm64.tgz -C dist --transform='s/tailscaled.arm64/tailscaled/' tailscaled.arm64
-            tar -czf dist/tailscale_${VERSION_SHORT}_arm.tgz -C dist --transform='s/tailscaled.arm/tailscaled/' tailscaled.arm
-            ls -lh dist
-
-        - name: Upload artifacts
-          uses: actions/upload-artifact@v4
-          with:
-            name: release-artifacts
-            path: |
-              dist/*.tgz
-
-        - name: Upload artifacts for arm
-          uses: actions/upload-artifact@v4
-          with:
-            name: tailscaled.arm.${{ steps.compress_artifacts.outputs.VERSION_SHORT }}
-            path: |
-              dist/tailscaled.arm
-        
-        - name: Upload artifacts for arm64
-          uses: actions/upload-artifact@v4
-          with:
-            name: tailscaled.arm64.${{ steps.compress_artifacts.outputs.VERSION_SHORT }}
-            path: |
-              dist/tailscaled.arm64
-
-        - name: Create Release
-          uses: softprops/action-gh-release@v3
-          with:
-            token: "${{ secrets.GITHUB_TOKEN }}"
-            prerelease: ${{ steps.release_type.outputs.is_prerelease }}
-            generate_release_notes: true
-            files: |
-              dist/*.tgz
+    needs: metadata
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm, arm64, amd64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install Android NDK
+        uses: nttld/setup-ndk@v1
+        id: ndk
+        with:
+          ndk-version: r27c
+          add-to-path: false
+      - name: Build combined daemon and CLI
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+          ARCH: ${{ matrix.arch }}
+          PRERELEASE: ${{ inputs.prerelease || false }}
+        run: |
+          args=()
+          if [[ "$PRERELEASE" == true ]]; then args+=(--pre); fi
+          ./scripts/android.sh build "${args[@]}" "$ARCH"
+      - name: Verify ELF, archive and version metadata
+        env:
+          ARCH: ${{ matrix.arch }}
+          VERSION: ${{ needs.metadata.outputs.version }}
+        run: |
+          python3 scripts/verify-android.py "dist/tailscaled.$ARCH" "$ARCH"
+          go version -m "dist/tailscaled.$ARCH"
+          tar -tzf "dist/tailscale_${VERSION}_${ARCH}.tgz"
+          cd dist
+          sha256sum "tailscale_${VERSION}_${ARCH}.tgz" > "tailscale_${VERSION}_${ARCH}.tgz.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-${{ matrix.arch }}
+          path: |
+            dist/*.tgz
+            dist/*.sha256
+          if-no-files-found: error
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Check build script and Android packages
+        run: |
+          bash -n scripts/android.sh
+          ./scripts/android.sh check arm64
+      - name: Test SSH environment handling and firewall marks
+        run: go test ./ssh/tailssh ./util/linuxfw ./tsconst ./util/osuser

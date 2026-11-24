@@ -4,7 +4,7 @@
 
 Android command-line builds of [Tailscale](https://github.com/tailscale/tailscale),
 maintained by **zym013579**, based on anasfanani's Android port.
-Current upstream stable baseline: **v1.102.4**. Development happens on **main**;
+Current upstream stable baseline: **v1.104.7**. Development happens on **main**;
 release versions are tags, not separate development branches.
 
 ## Downloads
@@ -13,9 +13,9 @@ Download from [Releases](https://github.com/zym013579/tailscale-android-cli/rele
 
 | CPU | Archive |
 | --- | --- |
-| ARMv7 | `tailscale_1.102.4_arm.tgz` |
-| ARM64 | `tailscale_1.102.4_arm64.tgz` |
-| x86_64 | `tailscale_1.102.4_amd64.tgz` |
+| ARMv7 | `tailscale_1.104.7_arm.tgz` |
+| ARM64 | `tailscale_1.104.7_arm64.tgz` |
+| x86_64 | `tailscale_1.104.7_amd64.tgz` |
 
 Each archive includes the combined `tailscaled` executable, a `tailscale` symlink,
 and LICENSE. These are Android bionic executables, not APKs or Linux/glibc builds.
@@ -34,8 +34,8 @@ SSH, DNS and routing features still require validation on the target Android dev
   the current version as the latest GitHub Release after all checks pass.
 - **Build Android binaries** handles pull requests, manual build-only runs and the
   reusable build called by the release workflow, without duplicating main builds.
-- Matching tags such as `v1.102.4-android` and manual release dispatch still work.
-  Use `v1.102.4-android-pre` or the prerelease input for prereleases.
+- Matching tags such as `v1.104.7-android` and manual release dispatch still work.
+  Use `v1.104.7-android-pre` or the prerelease input for prereleases.
 - VERSION.txt determines the release version and asset names. Update it before a
   new version is published; an existing release is not silently overwritten.
   Tags must match VERSION.txt. A failed build never publishes a release.
